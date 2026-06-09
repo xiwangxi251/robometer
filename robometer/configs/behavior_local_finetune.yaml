@@ -7,7 +7,7 @@ defaults:
 trainer_cls: "rbm_heads"
 
 model:
-  base_model_id: "/data/hxai/Robometer-4B"
+  base_model_id: "/data/hxai/Qwen3-VL-4B-Instruct"
   use_unsloth: false
   use_peft: true
   train_progress_head: true
