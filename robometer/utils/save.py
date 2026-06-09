@@ -256,8 +256,23 @@ def resolve_checkpoint_path(checkpoint_path: str | None, hub_token: str | None =
     if not checkpoint_path:
         return None
 
-    # If it's a local path, return as-is
-    if checkpoint_path.startswith("/") or checkpoint_path.startswith("./") or checkpoint_path.startswith("../"):
+    is_local = (
+        checkpoint_path.startswith("/")
+        or checkpoint_path.startswith("./")
+        or checkpoint_path.startswith("../")
+        or (len(checkpoint_path) >= 3 and checkpoint_path[1] == ":" and checkpoint_path[2] in ("\\", "/"))
+        or Path(checkpoint_path).exists()
+    )
+
+    # If it's a local path, validate and return as-is. Do not fall back to Hub.
+    if is_local:
+        path = Path(checkpoint_path)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Checkpoint is configured as a local path but does not exist: {checkpoint_path}"
+            )
+        if not path.is_dir():
+            raise NotADirectoryError(f"Checkpoint path must be a directory, got: {checkpoint_path}")
         logger.info(f"Using local checkpoint: {checkpoint_path}")
         return checkpoint_path
 

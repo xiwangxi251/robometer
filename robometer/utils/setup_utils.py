@@ -58,6 +58,86 @@ logger = get_logger()
 from robometer.utils.save import parse_hf_model_id_and_revision, resolve_checkpoint_path
 
 
+def _is_local_path(value: str | None) -> bool:
+    if not value:
+        return False
+    return (
+        value.startswith("/")
+        or value.startswith("./")
+        or value.startswith("../")
+        or (len(value) >= 3 and value[1] == ":" and value[2] in ("\\", "/"))
+    )
+
+
+def _require_local_dir(path: str, label: str) -> None:
+    local_path = Path(path)
+    if not local_path.exists():
+        raise FileNotFoundError(
+            f"{label} is configured as a local path but does not exist: {path}\n"
+            "Check that the path is visible from the machine/container running this command."
+        )
+    if not local_path.is_dir():
+        raise NotADirectoryError(f"{label} must be a directory, got: {path}")
+
+
+def _require_local_model_assets(model_id: str) -> None:
+    if not _is_local_path(model_id):
+        return
+
+    _require_local_dir(model_id, "model.base_model_id")
+    path = Path(model_id)
+    missing: list[str] = []
+    if not (path / "config.json").is_file():
+        missing.append("config.json")
+    if not any((path / name).is_file() for name in ("tokenizer.json", "tokenizer.model", "vocab.json")):
+        missing.append("tokenizer.json/tokenizer.model/vocab.json")
+    if not any((path / name).is_file() for name in ("preprocessor_config.json", "processor_config.json")):
+        missing.append("preprocessor_config.json/processor_config.json")
+    if missing:
+        raise FileNotFoundError(
+            f"Local model directory is incomplete: {model_id}\n"
+            f"Missing: {', '.join(missing)}"
+        )
+
+
+def _local_from_pretrained_kwargs(model_id: str | None) -> dict[str, bool]:
+    return {"local_files_only": True} if _is_local_path(model_id) else {}
+
+
+def _infer_model_family(model_id: str) -> str:
+    lowered = model_id.lower()
+    if "smolvlm" in lowered:
+        return "smolvlm"
+    if "molmo" in lowered:
+        return "molmo"
+    if "qwen" in lowered:
+        return "qwen"
+
+    if _is_local_path(model_id):
+        config_path = Path(model_id) / "config.json"
+        if not config_path.is_file():
+            return "unknown"
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+        except Exception:
+            return "unknown"
+        config_text = json.dumps(
+            {
+                "model_type": config.get("model_type"),
+                "architectures": config.get("architectures"),
+            }
+        ).lower()
+        if "smolvlm" in config_text:
+            return "smolvlm"
+        if "molmo" in config_text:
+            return "molmo"
+        if "qwen" in config_text:
+            return "qwen"
+
+    return "unknown"
+
+
 def _get_rbm_peft_target(rbm_model: RBM) -> tuple[Optional[str], Optional[PeftModel]]:
     """Return the PEFT-wrapped RBM component, if any."""
     root = getattr(rbm_model, "model", None)
@@ -497,6 +577,7 @@ def _load_base_model_with_unsloth(
         Tuple of (base_model, tokenizer)
     """
     logger.info("Using Unsloth for faster training with Qwen model")
+    _require_local_model_assets(cfg.base_model_id)
 
     # Load model with unsloth
     base_model, tokenizer = FastVisionModel.from_pretrained(
@@ -508,6 +589,7 @@ def _load_base_model_with_unsloth(
         device_map=None,
         attn_implementation=extra_kwargs["attn_implementation"],
         trust_remote_code=True,
+        **_local_from_pretrained_kwargs(cfg.base_model_id),
     )
 
     # Apply PEFT if enabled (skip when apply_peft=False, e.g. checkpoint has no adapter files; train.py will add PEFT later)
@@ -566,9 +648,17 @@ def _load_base_model_standard(
     Returns:
         Base model
     """
+    _require_local_model_assets(cfg.base_model_id)
+
     # Check if it's Molmo, Qwen3 or Qwen2/2.5
-    is_molmo = "Molmo" in cfg.base_model_id
-    is_qwen3 = ("Qwen3" in cfg.base_model_id or "qwen3" in cfg.base_model_id.lower()) and HAS_QWEN3
+    model_family = _infer_model_family(cfg.base_model_id)
+    is_molmo = model_family == "molmo"
+    is_qwen3 = (
+        "Qwen3" in cfg.base_model_id
+        or "qwen3" in cfg.base_model_id.lower()
+        or model_family == "qwen"
+    ) and HAS_QWEN3
+    local_kwargs = _local_from_pretrained_kwargs(cfg.base_model_id)
 
     # Select appropriate model classes based on version and model type
     if is_molmo:
@@ -579,6 +669,7 @@ def _load_base_model_standard(
             trust_remote_code=cfg.trust_remote_code,
             **extra_kwargs,
             quantization_config=bnb,
+            **local_kwargs,
         )
         # Extract the base model for RBM
         base_model = base_model.model
@@ -590,6 +681,7 @@ def _load_base_model_standard(
             torch_dtype=torch_dtype,
             **extra_kwargs,
             quantization_config=bnb,
+            **local_kwargs,
         )
         logger.info("Using Qwen3 models")
     else:
@@ -599,6 +691,7 @@ def _load_base_model_standard(
             torch_dtype=torch_dtype,
             **extra_kwargs,
             quantization_config=bnb,
+            **local_kwargs,
         )
         logger.info("Using Qwen2/2.5 models")
 
@@ -615,6 +708,9 @@ def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
     Returns:
         Processor
     """
+    _require_local_model_assets(cfg.base_model_id)
+    local_kwargs = _local_from_pretrained_kwargs(cfg.base_model_id)
+
     if "SmolVLM" in cfg.base_model_id:
         processor = AutoProcessor.from_pretrained(
             cfg.base_model_id,
@@ -623,6 +719,7 @@ def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
             size={"longest_edge": 512},
             max_image_size={"longest_edge": 512},
             use_fast=True,
+            **local_kwargs,
         )
         logger.info(f"SmolVLM Processor: {processor}")
     elif "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
@@ -632,6 +729,7 @@ def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
             do_sample_frames=False,  # disable frame sampling here since we do this in the data generator
             # padding_side="left",
             padding_side="right",
+            **local_kwargs,
         )
         logger.info(f"Qwen Processor: {processor}")
     else:
@@ -835,9 +933,12 @@ def setup_model_and_processor(
     # Convert string dtype to torch dtype (used across all model loading paths)
     torch_dtype = getattr(torch, cfg.torch_dtype, torch.bfloat16)
     logger.info(f"Using torch dtype: {torch_dtype}")
+    _require_local_model_assets(cfg.base_model_id)
+    model_family = _infer_model_family(cfg.base_model_id)
+    local_kwargs = _local_from_pretrained_kwargs(cfg.base_model_id)
 
     # Check if unsloth should be used
-    use_unsloth = cfg.use_unsloth and "Qwen" in cfg.base_model_id
+    use_unsloth = cfg.use_unsloth and model_family == "qwen"
 
     if use_unsloth:
         logger.info("Unsloth mode enabled for faster training")
@@ -875,6 +976,8 @@ def setup_model_and_processor(
         "adapter_load_path": None,
     }
     if hf_model_id:
+        if _is_local_path(hf_model_id):
+            _require_local_dir(hf_model_id, "training.load_from_checkpoint")
         hub_token = os.environ.get("HF_TOKEN")
         checkpoint_path_for_load = resolve_checkpoint_path(hf_model_id, hub_token=hub_token)
         if checkpoint_path_for_load:
@@ -895,8 +998,8 @@ def setup_model_and_processor(
     apply_peft_before_wrap = cfg.use_peft and not loading_from_checkpoint
 
     # Load processor and tokenizer
-    if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
-        if "SmolVLM" in cfg.base_model_id:
+    if model_family in {"smolvlm", "qwen", "molmo"}:
+        if model_family == "smolvlm":
             processor = AutoProcessor.from_pretrained(
                 cfg.base_model_id,
                 trust_remote_code=cfg.trust_remote_code,
@@ -904,6 +1007,7 @@ def setup_model_and_processor(
                 size={"longest_edge": 512},
                 max_image_size={"longest_edge": 512},
                 use_fast=True,
+                **local_kwargs,
             )
             logger.info(f"SmolVLM Processor: {processor}")
 
@@ -912,10 +1016,11 @@ def setup_model_and_processor(
                 torch_dtype=torch_dtype,
                 **extra_kwargs,
                 quantization_config=bnb,
+                **local_kwargs,
             )
             model_cls = RBM
 
-        elif "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
+        elif model_family in {"qwen", "molmo"}:
             # Load base model (with or without Unsloth)
             if use_unsloth:
                 base_model, tokenizer = _load_base_model_with_unsloth(
