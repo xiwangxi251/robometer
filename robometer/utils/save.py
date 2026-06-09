@@ -214,8 +214,10 @@ def update_cfg_with_pretrained_ckpt(
     if not isinstance(loaded, dict):
         return
 
-    # Replace the model config except use_peft; sync only the progress-loss and multi-image fields.
-    model_names = {f.name for f in fields(ModelConfig)} - {"use_peft"}
+    # Replace the model config except fields that should stay controlled by the
+    # current run. In particular, keep local base_model_id/use_unsloth overrides
+    # so loading a local checkpoint does not fall back to a Hub/Unsloth base.
+    model_names = {f.name for f in fields(ModelConfig)} - {"base_model_id", "use_peft", "use_unsloth"}
     progress_loss_fields = {"progress_loss_type", "progress_discrete_bins"}
     loss_names = progress_loss_fields & {f.name for f in fields(LossConfig)}
     data_sync_fields = progress_loss_fields | {"use_multi_image", "use_per_frame_progress_token"}

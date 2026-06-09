@@ -8,6 +8,7 @@ trainer_cls: "rbm_heads"
 
 model:
   base_model_id: "/data/hxai/Robometer-4B"
+  use_unsloth: false
   use_peft: true
   train_progress_head: true
   train_preference_head: true
