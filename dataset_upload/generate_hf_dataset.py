@@ -128,6 +128,12 @@ class OutputConfig:
     num_workers: int = field(
         default=-1, metadata={"help": "Number of parallel workers for processing (-1 for auto, 0 for sequential)"}
     )
+    precompute_language_embeddings: bool = field(
+        default=True,
+        metadata={
+            "help": "Pre-compute sentence-transformer language embeddings. Disable for local/offline generation."
+        },
+    )
 
 
 @dataclass
@@ -209,6 +215,7 @@ def convert_dataset_to_hf_format(
     push_to_hub: bool = False,
     hub_repo_id: str | None = None,
     hub_token: str | None = None,
+    precompute_language_embeddings: bool = True,
 ) -> Dataset:
     """Convert a list of trajectories to HuggingFace format."""
 
@@ -235,23 +242,27 @@ def convert_dataset_to_hf_format(
 
     print(f"Using {num_workers} worker(s) for parallel processing")
 
-    # Pre-compute language embeddings to avoid loading sentence transformer in each worker
-    print("Pre-computing language embeddings...")
-    lang_model = load_sentence_transformer_model()
+    if precompute_language_embeddings:
+        # Pre-compute language embeddings to avoid loading sentence transformer in each worker
+        print("Pre-computing language embeddings...")
+        lang_model = load_sentence_transformer_model()
 
-    lang_vectors = []
-    unique_tasks = {}  # Cache for identical task descriptions
+        lang_vectors = []
+        unique_tasks = {}  # Cache for identical task descriptions
 
-    for trajectory in tqdm(trajectories, desc="Computing language embeddings"):
-        task_description = trajectory["task"]
+        for trajectory in tqdm(trajectories, desc="Computing language embeddings"):
+            task_description = trajectory["task"]
 
-        # Use cache to avoid recomputing identical task descriptions
-        if task_description not in unique_tasks:
-            unique_tasks[task_description] = lang_model.encode(task_description)
+            # Use cache to avoid recomputing identical task descriptions
+            if task_description not in unique_tasks:
+                unique_tasks[task_description] = lang_model.encode(task_description)
 
-        lang_vectors.append(unique_tasks[task_description])
+            lang_vectors.append(unique_tasks[task_description])
 
-    print(f"Computed embeddings for {len(unique_tasks)} unique task descriptions")
+        print(f"Computed embeddings for {len(unique_tasks)} unique task descriptions")
+    else:
+        print("Skipping language embedding pre-computation; using zero vectors.")
+        lang_vectors = [np.zeros(384, dtype=np.float32) for _ in trajectories]
 
     # Process trajectories
     all_entries = []
@@ -1083,6 +1094,7 @@ def main(cfg: GenerateConfig):
         push_to_hub=cfg.hub.push_to_hub,
         hub_repo_id=cfg.hub.hub_repo_id,
         hub_token=cfg.hub.hub_token,
+        precompute_language_embeddings=cfg.output.precompute_language_embeddings,
     )
 
     print("Dataset conversion complete!")

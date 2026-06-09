@@ -11,6 +11,7 @@ output:
   shortest_edge_size: 240
   center_crop: false
   num_workers: 0
+  precompute_language_embeddings: false
 
 hub:
   push_to_hub: false
