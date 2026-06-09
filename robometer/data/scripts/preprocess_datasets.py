@@ -868,6 +868,27 @@ class DatasetPreprocessor:
 
     def _load_dataset_from_path(self, dataset_path: str, subset: str):
         """Load dataset from path with proper video handling."""
+        is_local_path = (
+            os.path.isabs(dataset_path)
+            or dataset_path.startswith(("./", "../", ".\\", "..\\", "tmp/", "tmp\\"))
+            or ":" in dataset_path
+        )
+
+        if is_local_path and not os.path.exists(dataset_path):
+            raise FileNotFoundError(
+                f"Local dataset path does not exist: {dataset_path}. "
+                "Run dataset_upload/generate_hf_dataset.py first, or update the preprocess config to the generated output path."
+            )
+
+        if is_local_path and os.path.isdir(dataset_path) and not os.path.exists(
+            os.path.join(dataset_path, "dataset_info.json")
+        ):
+            raise FileNotFoundError(
+                f"Local dataset path exists but is not a HuggingFace save_to_disk dataset: {dataset_path}. "
+                f"Missing {os.path.join(dataset_path, 'dataset_info.json')}. "
+                "The dataset generation may not have completed, or the config points to the wrong directory."
+            )
+
         if os.path.exists(dataset_path) and os.path.isdir(dataset_path) and os.path.exists(
             os.path.join(dataset_path, "dataset_info.json")
         ):

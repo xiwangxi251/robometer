@@ -91,10 +91,10 @@ DATASET_CATEGORY = {
 DATASET_MAP = {
     "behavior_local": {
         "train": [
-            "tmp_behavior_local_rbm_behavior_local_",
+            "_data_hxai_robometer_outputs_behavior_local_",
         ],
         "eval": [
-            "tmp_behavior_local_rbm_behavior_local_",
+            "_data_hxai_robometer_outputs_behavior_local_",
         ],
     },
     "others": {
