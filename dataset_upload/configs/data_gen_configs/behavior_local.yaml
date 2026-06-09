@@ -1,5 +1,5 @@
 dataset:
-  dataset_path: '{"rft_path":"C:\\Users\\27642\\Desktop\\behavior\\behavior-1k-rl\\dataset\\rft_dataset_from_outputs4","expert_path":"D:\\behavior\\behavior_224_rgb"}'
+  dataset_path: '{"rft_path":"C:\\Users\\27642\\Desktop\\behavior\\behavior-1k-rl\\dataset\\rft_dataset_from_outputs4","expert_path":"D:\\behavior\\behavior_224_rgb","task_ids":[0,1]}'
   dataset_name: behavior_local
 
 output:

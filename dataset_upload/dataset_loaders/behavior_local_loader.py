@@ -76,7 +76,20 @@ def _episode_video_path(dataset_root: Path, task_index: int, episode_id: int) ->
     return dataset_root / "videos" / f"task-{task_index:04d}" / HEAD_CAMERA / f"episode_{episode_id:08d}.mp4"
 
 
-def _load_rft_trajectories(rft_path: Path, max_trajectories: int | None = None) -> list[dict[str, Any]]:
+def _normalize_task_ids(task_ids: Any) -> set[int] | None:
+    if task_ids is None:
+        return None
+    if isinstance(task_ids, str):
+        task_ids = [part.strip() for part in task_ids.split(",") if part.strip()]
+    normalized = {int(task_id) for task_id in task_ids}
+    return normalized or None
+
+
+def _load_rft_trajectories(
+    rft_path: Path,
+    max_trajectories: int | None = None,
+    task_ids: set[int] | None = None,
+) -> list[dict[str, Any]]:
     q_scores_path = rft_path / "q_scores_with_episode_ids.json"
     if not q_scores_path.exists():
         raise FileNotFoundError(f"Missing q-score file: {q_scores_path}")
@@ -95,6 +108,8 @@ def _load_rft_trajectories(rft_path: Path, max_trajectories: int | None = None) 
         q_score = float(ep["q_score"])
         task_name = str(ep["task_name"])
         task_index = int(ep["task_index"])
+        if task_ids is not None and task_index not in task_ids:
+            continue
         episode_id = int(ep["episode_id"])
         video_path = _episode_video_path(rft_path, task_index, episode_id)
         if not video_path.exists():
@@ -128,15 +143,25 @@ def _load_rft_trajectories(rft_path: Path, max_trajectories: int | None = None) 
     return trajectories
 
 
-def _discover_expert_videos(expert_path: Path) -> list[Path]:
+def _discover_expert_videos(expert_path: Path, task_ids: set[int] | None = None) -> list[Path]:
     videos_root = expert_path / "videos"
     if not videos_root.exists():
         raise FileNotFoundError(f"Missing expert videos directory: {videos_root}")
-    return sorted(videos_root.glob(f"task-*/{HEAD_CAMERA}/episode_*.mp4"))
+    if task_ids is None:
+        return sorted(videos_root.glob(f"task-*/{HEAD_CAMERA}/episode_*.mp4"))
+
+    video_paths: list[Path] = []
+    for task_id in sorted(task_ids):
+        video_paths.extend(sorted((videos_root / f"task-{task_id:04d}" / HEAD_CAMERA).glob("episode_*.mp4")))
+    return video_paths
 
 
-def _load_expert_trajectories(expert_path: Path, max_trajectories: int | None = None) -> list[dict[str, Any]]:
-    video_paths = _discover_expert_videos(expert_path)
+def _load_expert_trajectories(
+    expert_path: Path,
+    max_trajectories: int | None = None,
+    task_ids: set[int] | None = None,
+) -> list[dict[str, Any]]:
+    video_paths = _discover_expert_videos(expert_path, task_ids=task_ids)
     trajectories: list[dict[str, Any]] = []
 
     for video_path in tqdm(video_paths, desc="Loading BEHAVIOR expert episodes"):
@@ -157,7 +182,7 @@ def _load_expert_trajectories(expert_path: Path, max_trajectories: int | None = 
         task_name = task_name_by_index.get(task_index, f"task {task_index}")
 
         trajectories.append({
-            "id": f"behavior_expert_{episode_id:08d}",
+            "id": f"behavior_expert_task{task_index:04d}_{episode_id:08d}",
             "frames": BehaviorVideoFrameLoader(str(video_path)),
             "task": _task_to_instruction(task_name),
             "is_robot": False,
@@ -186,6 +211,7 @@ def load_behavior_local_dataset(dataset_path: str, max_trajectories: int | None 
     """
     rft_path = Path(DEFAULT_RFT_PATH)
     expert_path = Path(DEFAULT_EXPERT_PATH)
+    task_ids: set[int] | None = {0, 1}
 
     if dataset_path:
         config: dict[str, Any] = {}
@@ -201,6 +227,7 @@ def load_behavior_local_dataset(dataset_path: str, max_trajectories: int | None 
         if config:
             rft_path = Path(os.path.expanduser(config.get("rft_path", str(rft_path))))
             expert_path = Path(os.path.expanduser(config.get("expert_path", str(expert_path))))
+            task_ids = _normalize_task_ids(config.get("task_ids", task_ids))
 
     if not rft_path.exists():
         raise FileNotFoundError(f"BEHAVIOR RFT path not found: {rft_path}")
@@ -214,8 +241,11 @@ def load_behavior_local_dataset(dataset_path: str, max_trajectories: int | None 
         rft_limit = max_trajectories
         expert_limit = max_trajectories
 
-    trajectories = _load_rft_trajectories(rft_path, max_trajectories=rft_limit)
-    trajectories.extend(_load_expert_trajectories(expert_path, max_trajectories=expert_limit))
+    if task_ids is not None:
+        print(f"Filtering BEHAVIOR local tasks to task IDs: {sorted(task_ids)}")
+
+    trajectories = _load_rft_trajectories(rft_path, max_trajectories=rft_limit, task_ids=task_ids)
+    trajectories.extend(_load_expert_trajectories(expert_path, max_trajectories=expert_limit, task_ids=task_ids))
 
     task_data: dict[str, list[dict]] = {}
     for traj in trajectories:
