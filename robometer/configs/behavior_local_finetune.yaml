@@ -1,0 +1,37 @@
+# @package _global_
+
+defaults:
+  - config
+  - _self_
+
+trainer_cls: "rbm_heads"
+
+model:
+  use_peft: true
+  train_progress_head: true
+  train_preference_head: true
+  train_success_head: true
+  use_multi_image: ${data.use_multi_image}
+  use_per_frame_progress_token: true
+
+data:
+  train_datasets:
+    - behavior_local
+  eval_datasets:
+    - behavior_local
+  max_frames: 8
+  use_multi_image: true
+  use_per_frame_progress_token: ${model.use_per_frame_progress_token}
+  sample_type_ratio: [1, 0, 0]
+  preference_strategy_ratio: [0, 1, 0, 0]
+  partial_success_threshold: 0.0
+
+training:
+  exp_name: "behavior_local_rbm_lora"
+  load_from_checkpoint: "robometer/Robometer-4B"
+  predict_pref_progress: true
+
+logging:
+  log_to: []
+  save_best:
+    upload_to_hub: false

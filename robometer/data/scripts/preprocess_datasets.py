@@ -23,7 +23,7 @@ from sentence_transformers import SentenceTransformer
 from transformers import AutoModel, AutoImageProcessor
 from PIL import Image
 
-from datasets import Dataset, DatasetDict, Video, load_dataset
+from datasets import Dataset, DatasetDict, Video, load_dataset, load_from_disk
 from robometer.utils.distributed import rank_0_print
 from robometer.utils.embedding_utils import compute_video_embeddings, compute_text_embeddings
 
@@ -868,6 +868,21 @@ class DatasetPreprocessor:
 
     def _load_dataset_from_path(self, dataset_path: str, subset: str):
         """Load dataset from path with proper video handling."""
+        if os.path.exists(dataset_path) and os.path.isdir(dataset_path) and os.path.exists(
+            os.path.join(dataset_path, "dataset_info.json")
+        ):
+            rank_0_print(f"Loading local saved dataset: {dataset_path}")
+            dataset = load_from_disk(dataset_path)
+            dataset_root = os.path.dirname(dataset_path)
+
+            def patch_local_path(example):
+                frames_path = example["frames"]
+                if not os.path.isabs(frames_path):
+                    frames_path = os.path.join(dataset_root, frames_path)
+                return {"frames_video": frames_path, "frames_path": frames_path}
+
+            dataset = dataset.map(patch_local_path)
+            return dataset
         if "/" in dataset_path and not os.path.exists(dataset_path):
             # Loading from HuggingFace Hub - handle video paths
             rank_0_print(f"Loading dataset: {dataset_path}")

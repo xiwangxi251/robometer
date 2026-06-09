@@ -1040,6 +1040,15 @@ def main(cfg: GenerateConfig):
         print(f"Loading RoboReward dataset from: {cfg.dataset.dataset_path}")
         task_data = load_roboreward_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
         trajectories = flatten_task_data(task_data)
+    elif "behavior_local" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.behavior_local_loader import load_behavior_local_dataset
+
+        print(f"Loading local BEHAVIOR dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_behavior_local_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+        )
+        trajectories = flatten_task_data(task_data)
     elif "robofac" in cfg.dataset.dataset_name.lower():
         from dataset_upload.dataset_loaders.robofac_loader import load_robofac_dataset
 

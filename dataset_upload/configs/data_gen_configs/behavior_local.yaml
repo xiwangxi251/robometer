@@ -1,0 +1,17 @@
+dataset:
+  dataset_path: '{"rft_path":"C:\\Users\\27642\\Desktop\\behavior\\behavior-1k-rl\\dataset\\rft_dataset_from_outputs4","expert_path":"D:\\behavior\\behavior_224_rgb"}'
+  dataset_name: behavior_local
+
+output:
+  output_dir: tmp/behavior_local_rbm
+  max_trajectories: -1
+  max_frames: 64
+  use_video: true
+  fps: 10
+  shortest_edge_size: 240
+  center_crop: false
+  num_workers: 0
+
+hub:
+  push_to_hub: false
+  hub_repo_id: null

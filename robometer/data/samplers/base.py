@@ -417,8 +417,9 @@ class RBMBaseSampler:
             )
             return None
 
-        # Get minimum threshold from config
-        min_threshold = getattr(self.config, "partial_success_threshold", 0.2)
+        # Get minimum threshold from config. For BEHAVIOR local q_score ranking,
+        # equality is the only pair we must skip by default.
+        min_threshold = getattr(self.config, "partial_success_threshold", 0.0)
 
         # Get all trajectories from the same task
         same_task_indices = self.task_indices.get(task_name, [])
@@ -427,6 +428,8 @@ class RBMBaseSampler:
                 f"[BASE SAMPLER] _get_different_partial_success_traj: No trajectories found for task '{task_name}'"
             )
             return None
+
+        source_filter = ref_traj.get("data_source") if ref_traj.get("data_source") == "behavior_rft" else None
 
         # Filter to trajectories with different partial_success that meet the threshold requirement
         # Uses absolute difference to allow both higher and lower partial_success
@@ -442,6 +445,9 @@ class RBMBaseSampler:
             traj_dict = self.dataset[idx]
             traj_partial_success = traj_dict.get("partial_success", None)
 
+            if source_filter is not None and traj_dict.get("data_source") != source_filter:
+                continue
+
             if traj_partial_success is None:
                 logger.trace(
                     f"[BASE SAMPLER] _get_different_partial_success_traj: No partial_success for trajectory {traj_dict.get('id', 'unknown')}, task '{task_name}'"
@@ -450,7 +456,7 @@ class RBMBaseSampler:
 
             # Include if partial_success differs from reference by at least the threshold (using abs)
             partial_success_diff = abs(ref_partial_success - traj_partial_success)
-            if partial_success_diff >= min_threshold:
+            if partial_success_diff > 0 and partial_success_diff >= min_threshold:
                 candidate_indices.append(idx)
 
         if not candidate_indices:

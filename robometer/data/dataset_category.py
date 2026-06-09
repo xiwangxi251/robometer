@@ -13,6 +13,8 @@ from typing import List
 
 ALL_DATASOURCES = [
     "auto_eval_rfm",
+    "behavior_expert",
+    "behavior_rft",
     "failsafe",
     "fino_net",
     "h2r",
@@ -87,6 +89,14 @@ DATASET_CATEGORY = {
 }
 
 DATASET_MAP = {
+    "behavior_local": {
+        "train": [
+            "tmp_behavior_local_rbm_behavior_local_",
+        ],
+        "eval": [
+            "tmp_behavior_local_rbm_behavior_local_",
+        ],
+    },
     "others": {
         "train": [
             "jesbu1_molmoact_rfm_molmoact_dataset_household",
@@ -463,6 +473,7 @@ DATA_SOURCE_CATEGORY = {
         "usc_koch_human_robot_paired_robot",
     ],
     "suboptimal_fail": [
+        "behavior_rft",
         "roboarena",
         "fino_net",
         "failsafe",

@@ -239,7 +239,7 @@ class DataConfig:
 
     # Partial success threshold (for datasets with partial_success like RoboArena and RoboReward)
     partial_success_threshold: float = field(
-        default=0.2,
+        default=0.0,
         metadata={
             "help": "Minimum difference in partial_success required between chosen and rejected trajectories for preference sampling"
         },
