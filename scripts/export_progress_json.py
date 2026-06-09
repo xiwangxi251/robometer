@@ -20,8 +20,12 @@ from pathlib import Path
 import decord
 import numpy as np
 import torch
+from tqdm import tqdm
 
-from scripts.example_inference_local import compute_rewards_per_frame_local
+from robometer.data.dataset_types import ProgressSample, Trajectory
+from robometer.evals.eval_server import compute_batch_outputs
+from robometer.utils.save import load_model_from_hf
+from robometer.utils.setup_utils import setup_batch_collator
 
 
 def load_video_stride(video_path: str, stride: int) -> tuple[np.ndarray, np.ndarray, int]:
@@ -72,6 +76,87 @@ def interpolate_to_all_frames(
     return dense
 
 
+def predict_progress_windowed(
+    model_path: str,
+    sampled_frames: np.ndarray,
+    task: str,
+    *,
+    window_size: int,
+    device: torch.device | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Predict one progress value per sampled frame using bounded-size windows."""
+    if window_size <= 0:
+        raise ValueError(f"window_size must be positive, got {window_size}")
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    exp_config, tokenizer, processor, reward_model = load_model_from_hf(
+        model_path=model_path,
+        device=device,
+    )
+    reward_model.eval()
+    batch_collator = setup_batch_collator(processor, tokenizer, exp_config, is_eval=True)
+
+    loss_config = getattr(exp_config, "loss", None)
+    is_discrete = (
+        getattr(loss_config, "progress_loss_type", "l2").lower() == "discrete"
+        if loss_config
+        else False
+    )
+    num_bins = (
+        getattr(loss_config, "progress_discrete_bins", None)
+        or getattr(exp_config.model, "progress_discrete_bins", 10)
+    )
+
+    progress_values: list[float] = []
+    success_values: list[float] = []
+
+    with torch.inference_mode():
+        for end_idx in tqdm(range(len(sampled_frames)), desc="Predicting sampled progress"):
+            start_idx = max(0, end_idx - window_size + 1)
+            window = sampled_frames[start_idx : end_idx + 1]
+
+            traj = Trajectory(
+                frames=window,
+                frames_shape=tuple(window.shape),
+                task=task,
+                id=str(end_idx),
+                metadata={"subsequence_length": int(window.shape[0])},
+                video_embeddings=None,
+            )
+            sample = ProgressSample(trajectory=traj, sample_type="progress")
+            batch = batch_collator([sample])
+
+            progress_inputs = batch["progress_inputs"]
+            for key, value in progress_inputs.items():
+                if hasattr(value, "to"):
+                    progress_inputs[key] = value.to(device)
+
+            results = compute_batch_outputs(
+                reward_model,
+                tokenizer,
+                progress_inputs,
+                sample_type="progress",
+                is_discrete_mode=is_discrete,
+                num_bins=num_bins,
+            )
+
+            progress_pred = results.get("progress_pred", [])
+            if not progress_pred or len(progress_pred[0]) == 0:
+                raise RuntimeError(f"Model returned no progress prediction for sampled frame {end_idx}")
+            progress_values.append(float(progress_pred[0][-1]))
+
+            outputs_success = results.get("outputs_success", {})
+            success_probs = outputs_success.get("success_probs", []) if outputs_success else []
+            if success_probs and len(success_probs[0]) > 0:
+                success_values.append(float(success_probs[0][-1]))
+
+            del batch, progress_inputs, results
+
+    return np.asarray(progress_values, dtype=np.float32), np.asarray(success_values, dtype=np.float32)
+
+
 def write_expected_values_json(
     output_path: str,
     episode_id: str,
@@ -106,6 +191,12 @@ def main() -> None:
         default=10,
         help="Sample one frame every N original frames before interpolation. For 30 fps, 10 means 3 Hz.",
     )
+    parser.add_argument(
+        "--window-size",
+        type=int,
+        default=8,
+        help="Maximum sampled frames sent to the model at once. Keep this near training max_frames to avoid OOM.",
+    )
     parser.add_argument("--device", default=None, help="Optional torch device, e.g. cuda:0 or cpu")
     parser.add_argument("--indent", type=int, default=2, help="JSON indent. Use 0 for compact output.")
     args = parser.parse_args()
@@ -113,10 +204,11 @@ def main() -> None:
     frames, sampled_indices, total_frames = load_video_stride(args.video, args.stride)
     device = torch.device(args.device) if args.device else None
 
-    progress_values, success_probs = compute_rewards_per_frame_local(
+    progress_values, success_probs = predict_progress_windowed(
         model_path=args.model_path,
-        video_frames=frames,
+        sampled_frames=frames,
         task=args.task,
+        window_size=args.window_size,
         device=device,
     )
     dense_values = interpolate_to_all_frames(sampled_indices, progress_values, total_frames)
@@ -133,6 +225,7 @@ def main() -> None:
         "episode_id": str(args.episode_id),
         "total_frames": int(total_frames),
         "stride": int(args.stride),
+        "window_size": int(args.window_size),
         "sampled_frames": int(len(sampled_indices)),
         "predictions": int(len(progress_values)),
         "success_predictions": int(len(success_probs)),
